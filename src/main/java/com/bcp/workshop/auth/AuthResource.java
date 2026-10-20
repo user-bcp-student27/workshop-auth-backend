@@ -1,6 +1,8 @@
 package com.bcp.workshop.auth;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -19,6 +21,14 @@ public class AuthResource {
     @Inject
     LegacyDatabase database;
 
+    @ConfigProperty(name = "auth.token.secret")
+    String tokenSecret;
+
+    @PostConstruct
+    void validateTokenSecret() {
+        LegacyTokenUtil.validateSecret(tokenSecret);
+    }
+
     @POST
     @Path("/login")
     public Response login(LoginRequest request) {
@@ -32,21 +42,25 @@ public class AuthResource {
                     if (request.password == null || request.password.trim().isEmpty()) {
                         return Response.status(400).entity(Map.of("message", "Password is required")).build();
                     } else {
-                        UserRecord user = database.findByCredentials(request.username, request.password);
-                        if (user == null) {
-                            return Response.status(401).entity(Map.of("message", "Invalid user " + request.username + " or password")).build();
+                        if (request.client == null || !request.client.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")) {
+                            return Response.status(400).entity(Map.of("message", "Client is invalid")).build();
                         } else {
-                            String token = LegacyTokenUtil.create(user.username(), user.role());
-                            Map<String, Object> response = new HashMap<>();
-                            response.put("token", token);
-                            response.put("expiresIn", 3600);
-                            response.put("user", Map.of(
-                                    "username", user.username(),
-                                    "displayName", StringEscapeUtils.escapeHtml4(user.displayName()),
-                                    "role", user.role()
-                            ));
-                            response.put("debug", "authenticated-with-legacy-flow");
-                            return Response.ok(response).build();
+                            UserRecord user = database.findByCredentials(request.username, request.password);
+                            if (user == null) {
+                                return Response.status(401).entity(Map.of("message", "Invalid user " + request.username + " or password")).build();
+                            } else {
+                                String token = LegacyTokenUtil.create(user.username(), user.role(), request.client, tokenSecret);
+                                Map<String, Object> response = new HashMap<>();
+                                response.put("token", token);
+                                response.put("expiresIn", LegacyTokenUtil.TOKEN_TTL_SECONDS);
+                                response.put("user", Map.of(
+                                        "username", user.username(),
+                                        "displayName", StringEscapeUtils.escapeHtml4(user.displayName()),
+                                        "role", user.role()
+                                ));
+                                response.put("debug", "authenticated-with-legacy-flow");
+                                return Response.ok(response).build();
+                            }
                         }
                     }
                 }
