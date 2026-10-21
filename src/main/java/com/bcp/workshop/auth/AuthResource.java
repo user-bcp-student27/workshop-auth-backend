@@ -19,6 +19,9 @@ public class AuthResource {
     @Inject
     LegacyDatabase database;
 
+    @Inject
+    AuthTokenService tokenService;
+
     @POST
     @Path("/login")
     public Response login(LoginRequest request) {
@@ -32,21 +35,25 @@ public class AuthResource {
                     if (request.password == null || request.password.trim().isEmpty()) {
                         return Response.status(400).entity(Map.of("message", "Password is required")).build();
                     } else {
-                        UserRecord user = database.findByCredentials(request.username, request.password);
-                        if (user == null) {
-                            return Response.status(401).entity(Map.of("message", "Invalid user " + request.username + " or password")).build();
+                        if (request.client == null || request.client.isBlank()) {
+                            return Response.status(400).entity(Map.of("message", "Client is required")).build();
                         } else {
-                            String token = LegacyTokenUtil.create(user.username(), user.role());
-                            Map<String, Object> response = new HashMap<>();
-                            response.put("token", token);
-                            response.put("expiresIn", 3600);
-                            response.put("user", Map.of(
-                                    "username", user.username(),
-                                    "displayName", StringEscapeUtils.escapeHtml4(user.displayName()),
-                                    "role", user.role()
-                            ));
-                            response.put("debug", "authenticated-with-legacy-flow");
-                            return Response.ok(response).build();
+                            UserRecord user = database.findByCredentials(request.username, request.password);
+                            if (user == null) {
+                                return Response.status(401).entity(Map.of("message", "Invalid user " + request.username + " or password")).build();
+                            } else {
+                                String token = tokenService.issue(user.username(), request.client);
+                                Map<String, Object> response = new HashMap<>();
+                                response.put("token", token);
+                                response.put("expiresIn", Math.toIntExact(AuthTokenService.TOKEN_LIFETIME_SECONDS));
+                                response.put("user", Map.of(
+                                        "username", user.username(),
+                                        "displayName", StringEscapeUtils.escapeHtml4(user.displayName()),
+                                        "role", user.role()
+                                ));
+                                response.put("debug", "authenticated-with-legacy-flow");
+                                return Response.ok(response).build();
+                            }
                         }
                     }
                 }
